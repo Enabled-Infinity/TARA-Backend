@@ -2,7 +2,7 @@
 LLM Integration Tools Module
 
 This module provides a reusable function to interact with OpenAI's GPT-5 model
-with access to Google Workspace integrations (Gmail, Calendar, Docs, Drive, Meet, Sheets).
+with access to Google Workspace integrations (Gmail, Calendar, Docs, Drive, Meet, Sheets, Tasks).
 
 Usage:
     # As a module:
@@ -106,6 +106,20 @@ from google_sheets import (
     batch_write,
     get_sheet_info,
 )
+from google_tasks import (
+    get_service as get_tasks_service,
+    list_task_lists,
+    create_task_list,
+    get_task_list,
+    delete_task_list,
+    list_tasks,
+    create_task,
+    get_task,
+    update_task,
+    delete_task,
+    move_task,
+    clear_completed_tasks,
+)
 
 load_dotenv()
 client = OpenAI()
@@ -135,6 +149,9 @@ def get_cached_service(service_type):
         elif service_type == "sheets":
             print('SHEETS')
             _service_cache[service_type] = get_sheets_service()
+        elif service_type == "tasks":
+            print('TASKS')
+            _service_cache[service_type] = get_tasks_service()
     return _service_cache[service_type]
 
 
@@ -450,6 +467,113 @@ tools = [
             "required": ["spreadsheet_id", "range_name", "values"],
         },
     },
+    # Google Tasks tools
+    {
+        "type": "function",
+        "name": "tasks_list_task_lists",
+        "description": "List all task lists in Google Tasks.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "max_results": {"type": "integer", "description": "Maximum number of task lists to return (default: 10)"},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "name": "tasks_create_task_list",
+        "description": "Create a new task list in Google Tasks.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Title of the task list"},
+            },
+            "required": ["title"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "tasks_list_tasks",
+        "description": "List tasks in a task list. Use '@default' for the default task list.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_list_id": {"type": "string", "description": "ID of the task list (default: '@default')"},
+                "show_completed": {"type": "boolean", "description": "Whether to show completed tasks (default: false)"},
+                "max_results": {"type": "integer", "description": "Maximum number of tasks to return (default: 100)"},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "name": "tasks_create_task",
+        "description": "Create a new task in a task list. Use '@default' for the default task list. Due date should be in RFC 3339 format (e.g., '2024-01-15T10:00:00Z').",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_list_id": {"type": "string", "description": "ID of the task list (default: '@default')"},
+                "title": {"type": "string", "description": "Title of the task"},
+                "notes": {"type": "string", "description": "Notes/description for the task (optional)"},
+                "due_date": {"type": "string", "description": "Due date in RFC 3339 format (e.g., '2024-01-15T10:00:00Z') (optional)"},
+                "status": {"type": "string", "description": "Task status: 'needsAction' or 'completed' (default: 'needsAction')"},
+            },
+            "required": ["title"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "tasks_update_task",
+        "description": "Update an existing task. Due date should be in RFC 3339 format (e.g., '2024-01-15T10:00:00Z').",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_list_id": {"type": "string", "description": "ID of the task list"},
+                "task_id": {"type": "string", "description": "ID of the task to update"},
+                "title": {"type": "string", "description": "New title (optional)"},
+                "notes": {"type": "string", "description": "New notes (optional)"},
+                "due_date": {"type": "string", "description": "New due date in RFC 3339 format (optional)"},
+                "status": {"type": "string", "description": "New status: 'needsAction' or 'completed' (optional)"},
+            },
+            "required": ["task_list_id", "task_id"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "tasks_delete_task",
+        "description": "Delete a task from a task list.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_list_id": {"type": "string", "description": "ID of the task list"},
+                "task_id": {"type": "string", "description": "ID of the task to delete"},
+            },
+            "required": ["task_list_id", "task_id"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "tasks_get_task",
+        "description": "Get a specific task by ID from a task list.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_list_id": {"type": "string", "description": "ID of the task list"},
+                "task_id": {"type": "string", "description": "ID of the task to retrieve"},
+            },
+            "required": ["task_list_id", "task_id"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "tasks_clear_completed",
+        "description": "Clear all completed tasks from a task list.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_list_id": {"type": "string", "description": "ID of the task list (default: '@default')"},
+            },
+        },
+    },
     {"type": "web_search"}
 ]
 
@@ -671,6 +795,74 @@ def sheets_append_row(spreadsheet_id, range_name, values):
     return json.dumps({"error": "Failed to append row"})
 
 
+def tasks_list_task_lists(max_results=10):
+    """List all task lists in Google Tasks."""
+    service = get_cached_service("tasks")
+    task_lists = list_task_lists(service, max_results=max_results)
+    return json.dumps({"task_lists": task_lists}, indent=2)
+
+
+def tasks_create_task_list(title):
+    """Create a new task list in Google Tasks."""
+    service = get_cached_service("tasks")
+    result = create_task_list(service, title)
+    if result:
+        return json.dumps(result, indent=2)
+    return json.dumps({"error": "Failed to create task list"})
+
+
+def tasks_list_tasks(task_list_id="@default", show_completed=False, max_results=100):
+    """List tasks in a task list."""
+    service = get_cached_service("tasks")
+    tasks = list_tasks(service, task_list_id=task_list_id, show_completed=show_completed, max_results=max_results)
+    return json.dumps({"tasks": tasks}, indent=2)
+
+
+def tasks_create_task(task_list_id="@default", title="", notes="", due_date=None, status="needsAction"):
+    """Create a new task in a task list."""
+    service = get_cached_service("tasks")
+    result = create_task(service, task_list_id=task_list_id, title=title, notes=notes, due_date=due_date, status=status)
+    if result:
+        return json.dumps(result, indent=2)
+    return json.dumps({"error": "Failed to create task"})
+
+
+def tasks_update_task(task_list_id, task_id, title=None, notes=None, due_date=None, status=None):
+    """Update an existing task."""
+    service = get_cached_service("tasks")
+    result = update_task(service, task_list_id, task_id, title=title, notes=notes, due_date=due_date, status=status)
+    if result:
+        return json.dumps(result, indent=2)
+    return json.dumps({"error": "Failed to update task"})
+
+
+def tasks_delete_task(task_list_id, task_id):
+    """Delete a task from a task list."""
+    service = get_cached_service("tasks")
+    result = delete_task(service, task_list_id, task_id)
+    if result:
+        return json.dumps({"success": True}, indent=2)
+    return json.dumps({"error": "Failed to delete task"})
+
+
+def tasks_get_task(task_list_id, task_id):
+    """Get a specific task by ID from a task list."""
+    service = get_cached_service("tasks")
+    task = get_task(service, task_list_id, task_id)
+    if task:
+        return json.dumps(task, indent=2)
+    return json.dumps({"error": "Task not found"})
+
+
+def tasks_clear_completed(task_list_id="@default"):
+    """Clear all completed tasks from a task list."""
+    service = get_cached_service("tasks")
+    result = clear_completed_tasks(service, task_list_id)
+    if result:
+        return json.dumps({"success": True}, indent=2)
+    return json.dumps({"error": "Failed to clear completed tasks"})
+
+
 # Map function names to their implementations
 function_map = {
     "gmail_list_messages": gmail_list_messages,
@@ -697,6 +889,14 @@ function_map = {
     "sheets_read_range": sheets_read_range,
     "sheets_write_range": sheets_write_range,
     "sheets_append_row": sheets_append_row,
+    "tasks_list_task_lists": tasks_list_task_lists,
+    "tasks_create_task_list": tasks_create_task_list,
+    "tasks_list_tasks": tasks_list_tasks,
+    "tasks_create_task": tasks_create_task,
+    "tasks_update_task": tasks_update_task,
+    "tasks_delete_task": tasks_delete_task,
+    "tasks_get_task": tasks_get_task,
+    "tasks_clear_completed": tasks_clear_completed,
 }
 
 
@@ -714,7 +914,7 @@ def filter_input_item(item_dict, valid_input_fields):
 def process_llm_with_tools(
     user_message,
     model="gpt-5",
-    instructions="You are a helpful assistant that can interact with Gmail, Google Calendar, Google Docs, Google Drive, Google Meet, and Google Sheets. Use the available tools to help users with their requests.",
+    instructions="You are a helpful assistant that can interact with Gmail, Google Calendar, Google Docs, Google Drive, Google Meet, Google Sheets, and Google Tasks. Use the available tools to help users with their requests.",
     conversation_history=None,
     stream=True,
     max_iterations=10
